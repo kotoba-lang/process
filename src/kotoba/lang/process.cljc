@@ -8,7 +8,7 @@
   Zero third-party runtime deps; .cljc."
   (:require [clojure.string :as str]))
 
-(def max-argv 32)
+(def max-argv 64)
 (def max-arg-bytes 4096)
 (def max-stdout-bytes 65536)
 (def max-timeout-ms 600000)
