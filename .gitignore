@@ -4,3 +4,4 @@ cpcache/
 target/
 .clj-kondo/.cache
 .lsp/
+.cpcache/
