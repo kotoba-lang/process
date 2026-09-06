@@ -72,3 +72,108 @@
        (is (= 0 (:exit r)))
        (is (str/starts-with?
             (str/trim (:stdout r)) "itonami")))))
+
+;; ---------------------------------------------------------------------------
+;; host/sh — portable clojure.java.shell/sh drop-in.
+;;
+;; These deftests are ordinary portable .cljc — `sh` itself dispatches on
+;; #?(:clj ProcessBuilder :cljs child_process.spawnSync) internally, so the
+;; test bodies below run byte-identical on JVM (`clojure -M:test`) and nbb
+;; (`nbb --classpath src:test run-tests.cljs`); no #?(:clj ...) / #?(:cljs ...)
+;; split is needed at the test level.
+
+(defn- file-exists? [path]
+  #?(:clj (.exists (java.io.File. ^String path))
+     :cljs (.existsSync (js/require "fs") path)))
+
+(defn- delete-file! [path]
+  #?(:clj (.delete (java.io.File. ^String path))
+     :cljs (try (.unlinkSync (js/require "fs") path)
+                (catch :default _ nil))))
+
+(defn- tmp-dir []
+  #?(:clj (System/getProperty "java.io.tmpdir")
+     :cljs (.tmpdir (js/require "os"))))
+
+(deftest sh-matches-clojure-java-shell-return-shape
+  ;; :exit/:out/:err — clojure.java.shell/sh's own keys, not os-spawn's
+  ;; :exit/:stdout/:stderr or exec's :status/:stdout/:stderr.
+  (let [r (host/sh "echo" "itonami" {:allowed #{"echo"}})]
+    (is (= 0 (:exit r)))
+    (is (str/includes? (:out r) "itonami"))
+    (is (string? (:err r)))))
+
+(deftest sh-is-synchronous-not-async
+  ;; A blocking call: the map is fully populated the instant sh returns, with
+  ;; no promise/future/channel involved. If sh ever became async under this
+  ;; name, :exit here would not yet be an int at this point.
+  (let [r (host/sh "echo" "sync-check" {:allowed #{"echo"}})]
+    (is (int? (:exit r)))
+    (is (string? (:out r)))))
+
+(deftest sh-honors-in-option
+  ;; `cat` with no argv file operands reads stdin and echoes it to stdout.
+  ;; This only succeeds if :in was actually piped in AND stdin was closed
+  ;; afterward (otherwise cat blocks forever waiting for EOF and this test
+  ;; times out instead of passing).
+  (let [r (host/sh "cat" {:allowed #{"cat"} :in "itonami-stdin-payload\n"})]
+    (is (= 0 (:exit r)))
+    (is (str/includes? (:out r) "itonami-stdin-payload"))))
+
+(deftest sh-honors-dir-option
+  ;; `touch <name>` with :dir set must create the file *inside* :dir, proven
+  ;; by checking the file at the absolute :dir + name path, not relative to
+  ;; whatever the test runner's own cwd happens to be.
+  (let [dir (tmp-dir)
+        fname (str "kotoba-process-sh-dir-" (rand-int 1000000000) ".marker")
+        full (str dir "/" fname)]
+    (delete-file! full)
+    (is (not (file-exists? full)))
+    (let [r (host/sh "touch" fname {:allowed #{"touch"} :dir dir})]
+      (is (= 0 (:exit r))))
+    (is (file-exists? full) ":dir must be honored — file must appear inside it")
+    (delete-file! full)))
+
+(deftest sh-policy-allowed-command-actually-spawns
+  ;; Positive control for the negative test below: same command ("touch"),
+  ;; same sentinel-file technique, but with an :allowed set that DOES
+  ;; include "touch" — the OS spawn primitive must actually run and the
+  ;; sentinel file must actually appear.
+  (let [dir (tmp-dir)
+        fname (str "kotoba-process-sh-allowed-" (rand-int 1000000000) ".marker")
+        full (str dir "/" fname)]
+    (delete-file! full)
+    (let [r (host/sh "touch" fname {:allowed #{"touch"} :dir dir})]
+      (is (= 0 (:exit r)))
+      (is (not (str/includes? (:err r) "rejected"))))
+    (is (file-exists? full) "an allowed command must actually run")
+    (delete-file! full)))
+
+(deftest sh-policy-rejected-command-never-actually-spawns
+  ;; Negative control: same command ("touch"), same sentinel-file technique,
+  ;; but :allowed does NOT include "touch". validate-spawn must reject the
+  ;; argv, and — the actual thing under test — the sentinel file must NEVER
+  ;; appear. This does not just check the return value looks like a
+  ;; rejection: it proves the OS spawn primitive (ProcessBuilder /
+  ;; spawnSync) was never invoked for this argv, by observing that its
+  ;; real-world side effect (the file) never happened.
+  (let [dir (tmp-dir)
+        fname (str "kotoba-process-sh-rejected-" (rand-int 1000000000) ".marker")
+        full (str dir "/" fname)]
+    (delete-file! full)
+    (is (not (file-exists? full)))
+    (let [r (host/sh "touch" fname {:allowed #{"echo"} :dir dir})]
+      (is (= -1 (:exit r)))
+      (is (str/includes? (:err r) "not-allowed")))
+    (is (not (file-exists? full))
+        "policy-rejected command must never actually spawn — file must never appear")
+    ;; belt-and-braces: also true with no :allowed set at all but argv[0]
+    ;; carrying a path separator (validate-spawn's structural rejection,
+    ;; independent of any allowlist).
+    (let [fname2 (str "kotoba-process-sh-rejected-path-" (rand-int 1000000000) ".marker")
+          full2 (str dir "/" fname2)
+          r2 (host/sh (str dir "/touch") fname2 {:dir dir})]
+      (is (= -1 (:exit r2)))
+      (is (str/includes? (:err r2) "path-command"))
+      (is (not (file-exists? full2))))
+    (delete-file! full)))
