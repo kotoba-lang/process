@@ -68,6 +68,147 @@
                (.write out buf 0 take)
                (recur (+ total take)))))))))
 
+;; ---------------------------------------------------------------------------
+;; `sh` — a policy-gated, portable drop-in for clojure.java.shell/sh.
+;;
+;; Unlike `os-spawn` above (which requires a host-supplied absolute-path
+;; :binaries map and never touches PATH), `sh` mirrors clojure.java.shell/sh's
+;; own ergonomics: argv[0] is a bare command name resolved by the OS's normal
+;; executable search (ProcessBuilder / child_process do this themselves, the
+;; same mechanism clojure.java.shell/sh itself relies on) — NOT a second PATH
+;; scan implemented by this library. `sh` does NOT require `clojure.java.shell`
+;; itself (that would defeat the point of this migration); the JVM branch
+;; talks to `java.lang.ProcessBuilder` directly, and the ClojureScript/nbb
+;; branch talks to Node's `child_process.spawnSync` directly.
+;;
+;; Every call is validated by `process/validate-spawn` BEFORE the OS spawn
+;; primitive is ever invoked. When validate-spawn rejects the argv, `sh`
+;; returns immediately with a sentinel `:exit -1` result — ProcessBuilder /
+;; spawnSync is never called, so a rejected command never actually runs.
+
+#?(:clj
+   (defn- sh-transport!
+     [argv {:keys [in dir max-stdout-bytes timeout-ms]}]
+     (try
+       (let [pb (doto (ProcessBuilder. ^java.util.List (vec (map str argv)))
+                  (.redirectErrorStream false))
+             _ (when dir (.directory pb (java.io.File. ^String (str dir))))
+             proc (.start pb)
+             ;; Read stdout/stderr concurrently with writing stdin so a large
+             ;; :in payload can't deadlock against a large child output (the
+             ;; same hazard clojure.java.shell/sh's own implementation guards
+             ;; against with futures).
+             stdout-f (future (read-bounded (.getInputStream proc) (long max-stdout-bytes)))
+             stderr-f (future (read-bounded (.getErrorStream proc) (long max-stdout-bytes)))]
+         (if in
+           (with-open [os (.getOutputStream proc)]
+             (.write os (.getBytes ^String in StandardCharsets/UTF_8)))
+           (.close (.getOutputStream proc)))
+         (let [finished (.waitFor proc (long timeout-ms) TimeUnit/MILLISECONDS)]
+           (if-not finished
+             (do (.destroyForcibly proc)
+                 {:exit -1 :out "" :err (str "sh timeout after " timeout-ms "ms")})
+             {:exit (long (.exitValue proc))
+              :out (str @stdout-f)
+              :err (str @stderr-f)})))
+       (catch Exception e
+         {:exit -1 :out "" :err (or (.getMessage e) "sh failed")}))))
+
+#?(:cljs
+   (defn- sh-transport!
+     [argv {:keys [in dir max-stdout-bytes timeout-ms]}]
+     (try
+       (let [cp (js/require "child_process")
+             bin (first argv)
+             cp-args (clj->js (vec (map str (rest argv))))
+             opts-map (cond-> {:encoding "utf8"
+                                :timeout timeout-ms
+                                :maxBuffer max-stdout-bytes
+                                :shell false
+                                :windowsHide true}
+                        dir (assoc :cwd (str dir))
+                        in (assoc :input in))
+             result (.spawnSync cp bin cp-args (clj->js opts-map))
+             err (.-error result)]
+         (if err
+           (let [code (.-code err)
+                 msg (or (.-message err) "sh failed")]
+             (if (or (= code "ETIMEDOUT")
+                     (str/includes? (str msg) "TIMEDOUT")
+                     (str/includes? (str msg) "timeout"))
+               {:exit -1 :out "" :err (str "sh timeout after " timeout-ms "ms")}
+               {:exit -1 :out "" :err (str msg)}))
+           {:exit (long (or (.-status result) 1))
+            :out (truncate-utf8 (or (.-stdout result) "") max-stdout-bytes)
+            :err (truncate-utf8 (or (.-stderr result) "") max-stdout-bytes)}))
+       (catch :default e
+         {:exit -1 :out "" :err (or (.-message e) "sh failed")}))))
+
+(defn sh
+  "Policy-gated, SYNCHRONOUS drop-in for `clojure.java.shell/sh`.
+
+  `(sh cmd & args)` — args may end in an options map, exactly like real
+  clojure.java.shell/sh. Blocks until the child process exits and returns
+  `{:exit <int> :out <string> :err <string>}` — the same keys and the same
+  blocking contract real callers depend on. This is never async: there is no
+  promise/future/callback under this name, because that would silently break
+  every caller that expects `sh` to have returned only once the process is
+  done.
+
+  Every argv is checked by `kotoba.lang.process/validate-spawn` BEFORE
+  anything is spawned. If validate-spawn rejects the argv (bad shape, a path
+  separator in argv[0], or — when an `:allowed` set is supplied — argv[0] not
+  in it), `sh` returns immediately with `{:exit -1 :out \"\" :err \"sh
+  rejected: <reason>\"}` and NEVER calls the OS spawn primitive
+  (ProcessBuilder on the JVM, `child_process.spawnSync` on ClojureScript/nbb)
+  for that argv. This is a real security boundary: a rejected command is not
+  spawned-then-discarded, it is never launched.
+
+  Supported opts:
+    :in       string piped to the child's stdin, which is then closed so
+              stdin-reading commands (e.g. `cat`) see EOF and exit
+    :dir      working directory, as a string (portable across JVM/nbb)
+    :allowed  optional set enforced by validate-spawn's basename allowlist;
+              omit to skip it (validate-spawn's structural checks — argv
+              shape, no path separators in argv[0] — still apply)
+    :max-stdout-bytes / :timeout-ms
+              override this library's default bounds (`process/max-stdout-bytes`
+              65536 / `process/max-timeout-ms` 600000ms); values above those
+              constants are themselves rejected by validate-spawn
+
+  NOT implemented — documented, not silently approximated:
+    :out      real clojure.java.shell/sh's :out selects the stdout encoding
+              (or :bytes). This always returns a UTF-8 string.
+    :env      real clojure.java.shell/sh's :env replaces the child's
+              environment. Not implemented: the child inherits this
+              process's environment unchanged. Per-call env override is a
+              real gap, not silently ignored.
+    non-string argv coercion — real clojure.java.shell/sh stringifies
+              non-string args (e.g. numbers, keywords) via `stringify-arg`.
+              Here every element of argv is passed through `str`, which is
+              close but not byte-identical for every Clojure value (e.g.
+              `:foo` becomes \"foo\" via clojure.java.shell but \":foo\" via
+              plain `str` on the JVM — cljs printing differs again). Callers
+              that need exact clojure.java.shell stringify semantics must
+              stringify their own args before calling `sh`.
+    unbounded execution — real clojure.java.shell/sh blocks with no timeout.
+              `sh` always applies `:timeout-ms` (default
+              `process/max-timeout-ms`, 600000ms) and destroys the child
+              process if it is exceeded, consistent with the rest of this
+              library's fail-safe bounds."
+  [& args]
+  (let [opts? (map? (last args))
+        opts (if opts? (last args) {})
+        cmd+args (if opts? (butlast args) args)
+        argv (vec (map str cmd+args))
+        allowed (:allowed opts)
+        max-out (or (:max-stdout-bytes opts) process/max-stdout-bytes)
+        t-ms (or (:timeout-ms opts) process/max-timeout-ms)
+        err (process/validate-spawn argv max-out t-ms allowed)]
+    (if err
+      {:exit -1 :out "" :err (str "sh rejected: " (name err))}
+      (sh-transport! argv (assoc opts :max-stdout-bytes max-out :timeout-ms t-ms)))))
+
 (defn os-spawn
   "Build an IProcess backed by the OS.
 

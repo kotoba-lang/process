@@ -39,6 +39,7 @@ except the convenience `exec`):
 
 - `os-spawn` — `#?(:clj ProcessBuilder, :cljs child_process.spawnSync)`
 - `resolve-binary`, `absolute-path?`
+- `sh` — policy-gated `clojure.java.shell/sh` drop-in, see below
 
 ```clojure
 (require '[kotoba.lang.process :as proc]
@@ -53,6 +54,71 @@ except the convenience `exec`):
 ;; => {:status 0 :stdout "hi\n" :stderr ""}
 ```
 
+## `sh` — a real, policy-gated `clojure.java.shell/sh` drop-in
+
+`kotoba.lang.process-host/sh` is the transport this migration piece
+(`clojure.java.shell`, 432 require sites workspace-wide) exists to replace.
+Signature and return shape mirror `clojure.java.shell/sh` exactly: `(sh cmd &
+args)`, args optionally ending in an options map, returning `{:exit <int>
+:out <string> :err <string>}` — not `os-spawn`'s `{:tag :exit :stdout
+:stderr}` or `exec`'s `{:status :stdout :stderr}`.
+
+```clojure
+(host/sh "echo" "hi" {:allowed #{"echo"}})
+;; => {:exit 0 :out "hi\n" :err ""}
+
+(host/sh "cat" {:allowed #{"cat"} :in "piped in\n"})
+;; => {:exit 0 :out "piped in\n" :err ""}
+
+(host/sh "touch" "f" {:allowed #{"touch"} :dir "/tmp"})
+;; => {:exit 0 :out "" :err ""}   ; creates /tmp/f
+
+(host/sh "rm" "-rf" "/" {:allowed #{"echo"}})
+;; => {:exit -1 :out "" :err "sh rejected: not-allowed"}
+;; rm was never invoked — see "Policy enforcement" below.
+```
+
+**Synchronous, on purpose.** `sh` blocks until the child process exits and
+only then returns — the same contract real `clojure.java.shell/sh` callers
+depend on. There is no async/promise/future under this name; introducing
+one would silently break every caller that expects a synchronous return.
+JVM: `java.lang.ProcessBuilder` directly (this library does **not** require
+`clojure.java.shell` itself — depending on it here would defeat the point of
+migrating off it). ClojureScript/nbb: Node's `child_process.spawnSync`
+(synchronous by construction, never the async `spawn`/`exec`).
+
+**Policy enforcement, not just policy computation.** Every call routes
+through the existing `validate-spawn` FIRST. If it rejects the argv — bad
+shape, a path separator in argv[0], or (when an `:allowed` set is supplied)
+argv[0] not in it — `sh` returns `{:exit -1 :out "" :err "sh rejected:
+<reason>"}` immediately, **without ever calling ProcessBuilder or
+spawnSync**. This is checked by test, not just asserted: the test suite has
+the "rejected" command `touch` a sentinel file and confirms the file never
+appears when the policy denies it (and *does* appear when the exact same
+call is allowed) — proving the process itself never launched, not merely
+that the return value looked like a rejection.
+
+Supported opts: `:in` (string → child's stdin, then closed so `cat`-like
+readers see EOF), `:dir` (working directory, string), `:allowed` (optional
+`validate-spawn` basename allowlist — omit to skip it; structural checks
+still apply), `:max-stdout-bytes` / `:timeout-ms` (override the library's
+default bounds; values above the library's own constants are themselves
+rejected by `validate-spawn`).
+
+**Not implemented — documented, not silently approximated:**
+
+- `:out` (stdout encoding / `:bytes`) — always returns a UTF-8 string.
+- `:env` (per-call environment override) — the child inherits this
+  process's environment unchanged.
+- exact `clojure.java.shell` argument stringification — argv elements are
+  passed through plain `str`, which differs from `clojure.java.shell`'s
+  `stringify-arg` for some values (e.g. keywords). Stringify your own args
+  first if you need byte-identical behavior.
+- unbounded execution — real `clojure.java.shell/sh` blocks forever if the
+  child never exits. `sh` always applies `:timeout-ms` (default
+  `process/max-timeout-ms`, 600000ms) and force-destroys the child if
+  exceeded, consistent with this library's other fail-safe bounds.
+
 ## Relation to `provider.process`
 
 `kotoba-lang/provider` owns the **typed kit** (`provider.process` +
@@ -66,3 +132,17 @@ depend here. The policy vocabulary (`:process/not-allowed`, …) is kept aligned
 ```clojure
 io.github.kotoba-lang/process {:git/sha "<sha>"}
 ```
+
+## Verify
+
+```sh
+clojure -M:test                              # JVM
+nbb --classpath src:test run-tests.cljs      # nbb / ClojureScript
+```
+
+Both run the **same** `.cljc` suite (`sh`'s tests are ordinary portable
+deftests — no `#?(:clj ...)`/`#?(:cljs ...)` split needed, since `sh` itself
+dispatches internally): JVM `13 tests, 39 assertions, 0 failures`; nbb
+`11 tests, 33 assertions, 0 failures` (2 fewer tests on nbb: two pre-existing
+`#?(:clj ...)`-only `exec` tests that exercise JVM-specific
+`clojure.java.shell` exception behavior, unrelated to `sh`).
