@@ -24,11 +24,18 @@ separators in argv[0]; the transport only runs mapped absolute paths.
 `kotoba.lang.process`:
 
 - `validate-spawn` — pure; returns `nil` or an error keyword
+- `exec` — one-shot array exec: `(exec argv)` → `{:status N :stdout :stderr}`.
+  Runs the command directly (no shell: JVM `clojure.java.shell/sh` without
+  `:in`, CLJS `child_process` array exec), capturing stdout. Missing command
+  fails closed (non-zero `:status`, no throw). Bounds apply `validate-spawn`
+  (max-argv 64, per-arg byte cap, path-command rejection); optional second arg
+  is a basename allowlist.
 - `IProcess` protocol — `(spawn! proc request)`
 - `echo-process` — test double (exit 0, stdout = joined argv rest)
 - bounds: `max-argv`, `max-arg-bytes`, `max-stdout-bytes`, `max-timeout-ms`
 
-`kotoba.lang.process-host` (separate namespace — keeps `process` free of OS):
+`kotoba.lang.process-host` (separate namespace — keeps `process` free of OS
+except the convenience `exec`):
 
 - `os-spawn` — `#?(:clj ProcessBuilder, :cljs child_process.spawnSync)`
 - `resolve-binary`, `absolute-path?`
@@ -40,6 +47,10 @@ separators in argv[0]; the transport only runs mapped absolute paths.
 (def p (host/os-spawn {:binaries {"echo" "/bin/echo" "git" "/usr/bin/git"}}))
 (proc/spawn! p {:argv ["echo" "hi"] :timeout-ms 5000 :max-stdout-bytes 65536})
 ;; => {:tag :ok :exit 0 :stdout "hi\n" :stderr ""}
+
+;; Other namespaces that just need a one-shot exec (no allowlist infra)
+(proc/exec ["echo" "hi"])
+;; => {:status 0 :stdout "hi\n" :stderr ""}
 ```
 
 ## Relation to `provider.process`

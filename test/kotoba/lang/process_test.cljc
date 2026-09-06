@@ -4,6 +4,28 @@
             [kotoba.lang.process :as proc]
             [kotoba.lang.process-host :as host]))
 
+(deftest exec-rejects-bad-argv
+  (let [r (proc/exec ["echo" "a" "b"] #{"nope"})]
+    (is (= 127 (:status r)))
+    (is (str/includes? (:stderr r) "not-allowed"))))
+
+#?(:clj
+   (deftest exec-runs-array-on-jvm
+     ;; argv[0] is a basename resolved on PATH (clojure.java.shell/sh), so the
+     ;; exec-array policy (no path separators) still holds.
+     (let [r (proc/exec ["echo" "itonami"] #{"echo"})]
+       (is (= 0 (:status r)))
+       (is (str/includes? (:stdout r) "itonami")))))
+
+#?(:clj
+   (deftest exec-missing-command-fails-closed
+     ;; argv[0] basename (no path separator) that does not exist on PATH → sh
+     ;; returns a non-zero :exit, never throws.
+     (let [r (proc/exec ["definitely-not-a-real-binary-xyz" "1"])]
+       (is (pos? (:status r)))
+       (is (string? (:stdout r)))
+       (is (string? (:stderr r))))))
+
 (deftest validate-spawn-refuses-path-commands
   (is (= :process/path-command
          (proc/validate-spawn ["/bin/echo" "x"] 100 1000 #{"echo"})))

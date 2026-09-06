@@ -6,7 +6,9 @@
   provided for tests.
 
   Zero third-party runtime deps; .cljc."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str])
+  #?(:clj (:require [clojure.java.shell :as shell]))
+  #?(:cljs (:require ["child_process" :as cp])))
 
 (def max-argv 64)
 (def max-arg-bytes 4096)
@@ -44,6 +46,50 @@
      (not (and (integer? timeout) (pos? timeout) (<= timeout max-timeout-ms)))
      :process/bad-timeout
      :else nil)))
+
+(defn exec
+  "Run `argv` as an exec-array — never through a shell — capturing stdout.
+
+  Portable replacement for `clojure.java.shell/sh` in .cljc code: returns
+  `{:status N :stdout string :stderr string}`. The command is executed
+  directly with `argv` vector (JVM: `clojure.java.shell/sh` without `:in`;
+  CLJS: `child_process` array exec — no `shell: true`, no string shellouts),
+  so argv values never round-trip through a shell. A missing/invald command
+  fails closed: non-zero `:status`, no throw.
+
+  `argv` must be a non-empty sequential of strings. Bounds match
+  `validate-spawn` (max-argv 64, per-arg byte cap, path-command/backslash
+  rejection). Pass an optional `allowed` set as the second arg to enforce a
+  basename allowlist (production callers should)."
+  ([argv] (exec argv nil))
+  ([argv allowed]
+   (let [err (validate-spawn argv max-stdout-bytes max-timeout-ms allowed)]
+     (if err
+       {:status 127 :stdout "" :stderr (str "exec rejected: " (name err))}
+       #?(:clj
+          (try
+            (let [r (apply shell/sh (first argv) (next argv))]
+              {:status (long (:exit r))
+               :stdout (str (:out r))
+               :stderr (str (:err r))})
+            ;; clojure.java.shell/sh THROWS IOException when the binary is
+            ;; missing (it does not fail closed by itself) — this wrapper is
+            ;; what turns that into a non-zero status, never a throw.
+            (catch java.io.IOException e
+              {:status 127
+               :stdout ""
+               :stderr (or (.getMessage e) "exec failed")}))
+          :cljs
+          (try
+            (let [r (cp/execFileSync (first argv) (subvec argv 1)
+                                     #js {:encoding "utf8"
+                                          :maxBuffer max-stdout-bytes
+                                          :windowsHide true})]
+              {:status 0 :stdout (str r) :stderr ""})
+            (catch :default e
+              {:status (long (or (.-status e) 1))
+               :stdout (str (or (.-stdout e) ""))
+               :stderr (str (or (.-stderr e) (.-message e) "exec failed"))})))))))
 
 (defprotocol IProcess
   (spawn! [proc request]
