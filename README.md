@@ -25,11 +25,12 @@ separators in argv[0]; the transport only runs mapped absolute paths.
 
 - `validate-spawn` — pure; returns `nil` or an error keyword
 - `exec` — one-shot array exec: `(exec argv)` → `{:status N :stdout :stderr}`.
-  Runs the command directly (no shell: JVM `clojure.java.shell/sh` without
-  `:in`, CLJS `child_process` array exec), capturing stdout. Missing command
-  fails closed (non-zero `:status`, no throw). Bounds apply `validate-spawn`
-  (max-argv 64, per-arg byte cap, path-command rejection); optional second arg
-  is a basename allowlist.
+  Runs the command directly (no shell: JVM `java.lang.ProcessBuilder`
+  directly — the same real-spawn primitive `process-host/sh` uses, this
+  library does not require `clojure.java.shell`; CLJS `child_process` array
+  exec), capturing stdout. Missing command fails closed (non-zero `:status`,
+  no throw). Bounds apply `validate-spawn` (max-argv 64, per-arg byte cap,
+  path-command rejection); optional second arg is a basename allowlist.
 - `IProcess` protocol — `(spawn! proc request)`
 - `echo-process` — test double (exit 0, stdout = joined argv rest)
 - bounds: `max-argv`, `max-arg-bytes`, `max-stdout-bytes`, `max-timeout-ms`
@@ -145,4 +146,10 @@ deftests — no `#?(:clj ...)`/`#?(:cljs ...)` split needed, since `sh` itself
 dispatches internally): JVM `13 tests, 39 assertions, 0 failures`; nbb
 `11 tests, 33 assertions, 0 failures` (2 fewer tests on nbb: two pre-existing
 `#?(:clj ...)`-only `exec` tests that exercise JVM-specific
-`clojure.java.shell` exception behavior, unrelated to `sh`).
+`java.lang.ProcessBuilder` exception behavior, unrelated to `sh`).
+
+`kotoba.lang.process` itself no longer requires `clojure.java.shell` anywhere
+— `exec`'s JVM branch was rewritten onto `java.lang.ProcessBuilder` directly
+(the same real-spawn primitive `process-host/sh` uses), closing a
+pre-existing gap where this library's own `exec` convenience function
+silently depended on the exact thing it exists to replace.
