@@ -11,16 +11,17 @@
 
 #?(:clj
    (deftest exec-runs-array-on-jvm
-     ;; argv[0] is a basename resolved on PATH (clojure.java.shell/sh), so the
-     ;; exec-array policy (no path separators) still holds.
+     ;; argv[0] is a basename resolved on PATH (java.lang.ProcessBuilder), so
+     ;; the exec-array policy (no path separators) still holds.
      (let [r (proc/exec ["echo" "itonami"] #{"echo"})]
        (is (= 0 (:status r)))
        (is (str/includes? (:stdout r) "itonami")))))
 
 #?(:clj
    (deftest exec-missing-command-fails-closed
-     ;; argv[0] basename (no path separator) that does not exist on PATH → sh
-     ;; returns a non-zero :exit, never throws.
+     ;; argv[0] basename (no path separator) that does not exist on PATH →
+     ;; ProcessBuilder.start() throws IOException, which exec turns into a
+     ;; non-zero :status, never a throw.
      (let [r (proc/exec ["definitely-not-a-real-binary-xyz" "1"])]
        (is (pos? (:status r)))
        (is (string? (:stdout r)))

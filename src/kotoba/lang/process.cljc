@@ -7,8 +7,11 @@
 
   Zero third-party runtime deps; .cljc."
   (:require [clojure.string :as str])
-  #?(:clj (:require [clojure.java.shell :as shell]))
-  #?(:cljs (:require ["child_process" :as cp])))
+  #?(:cljs (:require ["child_process" :as cp]))
+  #?(:clj
+     (:import (java.io ByteArrayOutputStream InputStream)
+              (java.nio.charset StandardCharsets)
+              (java.util.concurrent TimeUnit))))
 
 (def max-argv 64)
 (def max-arg-bytes 4096)
@@ -47,15 +50,36 @@
      :process/bad-timeout
      :else nil)))
 
+#?(:clj
+   (defn- read-bounded
+     "Read `in` fully (bounded by `max-bytes`) as UTF-8. Twin of the helper in
+     kotoba.lang.process-host's `sh` — duplicated here (not required) because
+     process-host itself requires this namespace, so requiring the other way
+     round would be circular."
+     [^InputStream in max-bytes]
+     (let [buf (byte-array 4096)
+           out (ByteArrayOutputStream.)]
+       (loop [total 0]
+         (let [n (.read in buf)]
+           (cond
+             (neg? n) (.toString out StandardCharsets/UTF_8)
+             (>= total max-bytes) (.toString out StandardCharsets/UTF_8)
+             :else
+             (let [take (min n (- max-bytes total))]
+               (.write out buf 0 take)
+               (recur (+ total take)))))))))
+
 (defn exec
   "Run `argv` as an exec-array — never through a shell — capturing stdout.
 
-  Portable replacement for `clojure.java.shell/sh` in .cljc code: returns
+  Portable replacement for shelling out in .cljc code: returns
   `{:status N :stdout string :stderr string}`. The command is executed
-  directly with `argv` vector (JVM: `clojure.java.shell/sh` without `:in`;
-  CLJS: `child_process` array exec — no `shell: true`, no string shellouts),
-  so argv values never round-trip through a shell. A missing/invald command
-  fails closed: non-zero `:status`, no throw.
+  directly with `argv` vector (JVM: `java.lang.ProcessBuilder` directly —
+  same real-spawn primitive `kotoba.lang.process-host/sh` uses, this library
+  does NOT require `clojure.java.shell`; CLJS: `child_process` array exec —
+  no `shell: true`, no string shellouts), so argv values never round-trip
+  through a shell. A missing/invald command fails closed: non-zero `:status`,
+  no throw.
 
   `argv` must be a non-empty sequential of strings. Bounds match
   `validate-spawn` (max-argv 64, per-arg byte cap, path-command/backslash
@@ -68,14 +92,31 @@
        {:status 127 :stdout "" :stderr (str "exec rejected: " (name err))}
        #?(:clj
           (try
-            (let [r (apply shell/sh (first argv) (next argv))]
-              {:status (long (:exit r))
-               :stdout (str (:out r))
-               :stderr (str (:err r))})
-            ;; clojure.java.shell/sh THROWS IOException when the binary is
+            (let [pb (doto (ProcessBuilder. ^java.util.List (vec (map str argv)))
+                       (.redirectErrorStream false))
+                  proc (.start pb)
+                  ;; Read stdout/stderr concurrently (same reason sh-transport!
+                  ;; does: a large child output must not deadlock against us
+                  ;; still holding stdin open).
+                  stdout-f (future (read-bounded (.getInputStream proc) (long max-stdout-bytes)))
+                  stderr-f (future (read-bounded (.getErrorStream proc) (long max-stdout-bytes)))]
+              ;; exec never pipes :in — close stdin immediately so any child
+              ;; that reads stdin sees EOF rather than hanging.
+              (.close (.getOutputStream proc))
+              (let [finished (.waitFor proc (long max-timeout-ms) TimeUnit/MILLISECONDS)]
+                (if-not finished
+                  (do (.destroyForcibly proc)
+                      {:status 127
+                       :stdout ""
+                       :stderr (str "exec timeout after " max-timeout-ms "ms")})
+                  {:status (long (.exitValue proc))
+                   :stdout (str @stdout-f)
+                   :stderr (str @stderr-f)})))
+            ;; ProcessBuilder/.start() throws IOException when the binary is
             ;; missing (it does not fail closed by itself) — this wrapper is
-            ;; what turns that into a non-zero status, never a throw.
-            (catch java.io.IOException e
+            ;; what turns that (and any other spawn-time failure) into a
+            ;; non-zero status, never a throw.
+            (catch Exception e
               {:status 127
                :stdout ""
                :stderr (or (.getMessage e) "exec failed")}))
