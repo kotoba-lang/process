@@ -4,7 +4,7 @@
 
   Twin of kotoba.lang.fs-host. No ambient PATH: `:binaries` map required.
   `#?(:clj ProcessBuilder, :cljs child_process.spawnSync)`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotoba.lang.process :as process])
   #?(:clj
      (:import (java.io ByteArrayOutputStream InputStream)

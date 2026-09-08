@@ -3,7 +3,12 @@
  ;; kotoba-lang/process — foundational process spawn: pure policy + host-injected
  ;; transport. Twin of kotoba-lang/fs. Zero third-party runtime deps; .cljc.
  ;; Catalog name :process/spawn (wire id 20). Does NOT grant ambient PATH.
- :deps {}
+ :deps {
+        ;; kotoba stdlib, not clojure.*. Pinned as explicit floors: tools.deps
+        ;; takes the NEWEST sha it is shown, so without a floor here this repo
+        ;; silently rides whatever a sibling happens to name.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+       }
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner

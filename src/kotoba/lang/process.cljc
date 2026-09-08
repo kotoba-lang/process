@@ -6,7 +6,7 @@
   provided for tests.
 
   Zero third-party runtime deps; .cljc."
-  (:require [clojure.string :as str])
+  (:require [kotoba.lang.text :as str])
   #?(:cljs (:require ["child_process" :as cp]))
   #?(:clj
      (:import (java.io ByteArrayOutputStream InputStream)
