@@ -1,5 +1,5 @@
 (ns kotoba.lang.process-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [kotoba.lang.process :as proc]
             [kotoba.lang.process-host :as host]))
