@@ -4,18 +4,19 @@
  ;; transport. Twin of kotoba-lang/fs. Zero third-party runtime deps; .cljc.
  ;; Catalog name :process/spawn (wire id 20). Does NOT grant ambient PATH.
  :deps {
-        io.github.kotoba-lang/process-iprocess
-        {:git/url "https://github.com/kotoba-lang/process-iprocess.git"
-         :git/sha "c1435c9f5fb4821b0373f4bdda8afb6e42922cfd"}
+        io.github.kotoba-lang/process-process
+        {:git/url "https://github.com/kotoba-lang/process-process.git"
+         :git/sha "2f4011cf7407cfce84b733596fee67dd30e82d16"}
         io.github.kotoba-lang/process-echo-process
         {:git/url "https://github.com/kotoba-lang/process-echo-process.git"
-         :git/sha "02a5c718389851f929c0a30994916f4841e49915"}
+         :git/sha "c40338339bb308cb613cd63f7e81df9ed5341390"}
         io.github.kotoba-lang/process-exec
         {:git/url "https://github.com/kotoba-lang/process-exec.git"
          :git/sha "31c4ac74e8bffeb1cbe3479d1f83fca0e2da5da8"}
         io.github.kotoba-lang/process-validate-spawn
         {:git/url "https://github.com/kotoba-lang/process-validate-spawn.git"
          :git/sha "b4d98a83cdeefd8495f56544bef2280112beb47d"}
+
 
         ;; kotoba stdlib, not clojure.*. Pinned as explicit floors: tools.deps
         ;; takes the NEWEST sha it is shown, so without a floor here this repo
