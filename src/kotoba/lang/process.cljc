@@ -12,7 +12,7 @@
      (:import (java.io ByteArrayOutputStream InputStream)
               (java.nio.charset StandardCharsets)
               (java.util.concurrent TimeUnit)))
-  (:require [kotoba.process.iprocess :as iprocess-p]))
+  (:require [kotoba.process.process :as process-p]))
 
 (def max-argv 64)
 (def max-arg-bytes 4096)
@@ -137,9 +137,9 @@
   "The protocol itself lives in one repo of its own now. This name is that
   SAME protocol, not a second one: an implementation reified against either
   is accepted by both (ADR-2609091900)."
-  iprocess-p/IProcess)
+  process-p/Process)
 
-(def spawn! iprocess-p/spawn!)
+(def spawn! process-p/spawn!)
 
 (defn echo-process
   "Test double: exit 0, stdout = space-joined argv rest, stderr empty.
