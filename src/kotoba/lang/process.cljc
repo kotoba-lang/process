@@ -11,7 +11,8 @@
   #?(:clj
      (:import (java.io ByteArrayOutputStream InputStream)
               (java.nio.charset StandardCharsets)
-              (java.util.concurrent TimeUnit))))
+              (java.util.concurrent TimeUnit)))
+  (:require [kotoba.process.iprocess :as iprocess-p]))
 
 (def max-argv 64)
 (def max-arg-bytes 4096)
@@ -132,11 +133,13 @@
                :stdout (str (or (.-stdout e) ""))
                :stderr (str (or (.-stderr e) (.-message e) "exec failed"))})))))))
 
-(defprotocol IProcess
-  (spawn! [proc request]
-    "Run `request` `{:argv :max-stdout-bytes :timeout-ms}`.
-     Returns `{:tag :ok :exit :stdout :stderr}` or
-     `{:tag :error :code :message}`."))
+(def IProcess
+  "The protocol itself lives in one repo of its own now. This name is that
+  SAME protocol, not a second one: an implementation reified against either
+  is accepted by both (ADR-2609091900)."
+  iprocess-p/IProcess)
+
+(def spawn! iprocess-p/spawn!)
 
 (defn echo-process
   "Test double: exit 0, stdout = space-joined argv rest, stderr empty.
