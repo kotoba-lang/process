@@ -80,7 +80,7 @@
 ;; These deftests are ordinary portable .cljc — `sh` itself dispatches on
 ;; #?(:clj ProcessBuilder :cljs child_process.spawnSync) internally, so the
 ;; test bodies below run byte-identical on JVM (`clojure -M:test`) and nbb
-;; (`nbb --classpath src:test run-tests.cljs`); no #?(:clj ...) / #?(:cljs ...)
+;; (`nbb --classpath src:test run-tests.cljk`); no #?(:clj ...) / #?(:cljs ...)
 ;; split is needed at the test level.
 
 (defn- file-exists? [path]
