@@ -138,7 +138,7 @@ io.github.kotoba-lang/process {:git/sha "<sha>"}
 
 ```sh
 clojure -M:test                              # JVM
-nbb --classpath src:test run-tests.cljs      # nbb / ClojureScript
+nbb --classpath src:test run-tests.cljk      # nbb / ClojureScript
 ```
 
 Both run the **same** `.cljc` suite (`sh`'s tests are ordinary portable
