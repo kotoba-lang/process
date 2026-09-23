@@ -5,3 +5,4 @@ target/
 .clj-kondo/.cache
 .lsp/
 .cpcache/
+.nbb/
