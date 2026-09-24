@@ -16,7 +16,9 @@
          :git/sha "c40338339bb308cb613cd63f7e81df9ed5341390"}
         io.github.kotoba-lang/process-exec
         {:git/url "https://github.com/kotoba-lang/process-exec.git"
-         :git/sha "31c4ac74e8bffeb1cbe3479d1f83fca0e2da5da8"}
+         ;; 83ca275: exec loads and runs on kbb (was: read-bounded refer
+         ;; failed the namespace, and the :cljs args were not a JS array)
+         :git/sha "83ca275a17e4e1f70ea9ce8402cb2bd7557f289e"}
         io.github.kotoba-lang/process-validate-spawn
         {:git/url "https://github.com/kotoba-lang/process-validate-spawn.git"
          :git/sha "b4d98a83cdeefd8495f56544bef2280112beb47d"}
