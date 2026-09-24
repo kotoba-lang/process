@@ -147,8 +147,10 @@
 (defn sh
   "Policy-gated, SYNCHRONOUS drop-in for `clojure.java.shell/sh`.
 
-  `(sh cmd & args)` — args may end in an options map, exactly like real
-  clojure.java.shell/sh. Blocks until the child process exits and returns
+  `(sh cmd & args)` — args may end in an options MAP. That is NOT
+  clojure.java.shell/sh's grammar, which takes keyword/value options after
+  the leading strings; `java-shell-sh` below parses that grammar and is what
+  kotoba.process/sh is. Blocks until the child process exits and returns
   `{:exit <int> :out <string> :err <string>}` — the same keys and the same
   blocking contract real callers depend on. This is never async: there is no
   promise/future/callback under this name, because that would silently break
@@ -208,6 +210,41 @@
     (if err
       {:exit -1 :out "" :err (str "sh rejected: " (name err))}
       (sh-transport! argv (assoc opts :max-stdout-bytes max-out :timeout-ms t-ms)))))
+
+(defn java-shell-sh
+  "`sh` with clojure.java.shell/sh's ARGUMENT GRAMMAR, over `sh` above.
+
+  clojure.java.shell/sh does not take a trailing options map (despite what
+  `sh`'s docstring above used to suggest): it splits its args with
+  `(split-with string? args)` -- the leading strings are the command, and
+  everything from the first non-string on is keyword/value options,
+  `(sh \"git\" \"status\" :dir d :in s)`. A trailing map there is an odd
+  option count and throws. This function parses exactly that way, so a call
+  site written for clojure.java.shell means the same argv here; `sh` above
+  would have run `git status :dir <d>` -- the options as arguments.
+
+  Options:
+    :in :dir     honoured (passed to `sh`); :in must be a string
+    :allowed :max-stdout-bytes :timeout-ms
+                 passed to `sh` (kotoba policy; clojure.java.shell has none)
+    :env :in-enc :out-enc
+                 THROW -- `sh` does not implement them, and ignoring :env
+                 silently would run the child in the wrong environment
+    anything else ignored, as clojure.java.shell ignores it
+  An odd option count throws, as clojure.java.shell does. The bounds and the
+  {:exit -1 ..} refusals are `sh`'s (see its docstring)."
+  [& args]
+  (let [[cmd opts] (split-with string? args)]
+    (when (odd? (count opts))
+      (throw (ex-info "No value supplied for key (clojure.java.shell options are keyword/value pairs)"
+                      {:type :process/bad-options :options (vec opts)})))
+    (let [o (apply hash-map opts)]
+      (when-let [bad (seq (filter #(contains? o %) [:env :in-enc :out-enc]))]
+        (throw (ex-info (str "not implemented by kotoba.process/sh: " (pr-str (vec bad)))
+                        {:type :process/unsupported-option :options (vec bad)})))
+      (when (and (contains? o :in) (not (string? (:in o))))
+        (throw (ex-info "kotoba.process/sh :in must be a string" {:type :process/unsupported-option})))
+      (apply sh (concat cmd [(select-keys o [:in :dir :allowed :max-stdout-bytes :timeout-ms])])))))
 
 (defn os-spawn
   "Build an IProcess backed by the OS.
