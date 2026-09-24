@@ -1,0 +1,23 @@
+(ns kotoba.process-test
+  "The facade kotoba.process: it loads (it did not on kbb until 2026-09-24),
+  and `sh` / `exec` answer through it exactly as through their definitions."
+  (:require [kotoba.test :refer [deftest is testing]]
+            [kotoba.process :as p]
+            [kotoba.lang.process-host :as host]))
+
+(deftest facade-sh-is-process-host-sh
+  (is (identical? p/sh host/sh)))
+
+(deftest facade-sh-returns-clojure-java-shell-shape
+  (is (= {:exit 0 :out "hi\n" :err ""} (p/sh "echo" "hi")))
+  (testing "a trailing options map is options, as in clojure.java.shell"
+    (is (= {:exit 0 :out "piped" :err ""} (p/sh "cat" {:in "piped"})))))
+
+(deftest facade-sh-bounded-contract
+  (testing "argv[0] with a path separator is refused, never spawned"
+    (is (= {:exit -1 :out "" :err "sh rejected: path-command"} (p/sh "/bin/echo" "x"))))
+  (testing "a blank argument is refused"
+    (is (= {:exit -1 :out "" :err "sh rejected: bad-arg"} (p/sh "echo" "")))))
+
+(deftest facade-exec-runs
+  (is (= {:status 0 :stdout "hi\n" :stderr ""} (p/exec ["echo" "hi"]))))
