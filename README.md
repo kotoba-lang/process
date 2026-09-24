@@ -59,10 +59,15 @@ except the convenience `exec`):
 
 `kotoba.lang.process-host/sh` is the transport this migration piece
 (`clojure.java.shell`, 432 require sites workspace-wide) exists to replace.
-Signature and return shape mirror `clojure.java.shell/sh` exactly: `(sh cmd &
-args)`, args optionally ending in an options map, returning `{:exit <int>
-:out <string> :err <string>}` — not `os-spawn`'s `{:tag :exit :stdout
-:stderr}` or `exec`'s `{:status :stdout :stderr}`.
+Return shape mirrors `clojure.java.shell/sh`: `{:exit <int> :out <string>
+:err <string>}` — not `os-spawn`'s `{:tag :exit :stdout :stderr}` or `exec`'s
+`{:status :stdout :stderr}`. The argument grammar of `process-host/sh` is
+`(sh cmd & args)` with an optional trailing options MAP; clojure.java.shell's
+own grammar is keyword/value options after the leading strings
+(`(sh "git" "status" :dir d)`). `process-host/java-shell-sh` parses that
+grammar, and it is what `kotoba.process/sh` re-exports — the name a call site
+migrated off clojure.java.shell uses (2026-09-24). It throws for `:env`,
+`:in-enc`, `:out-enc` and a non-string `:in` rather than ignoring them.
 
 ```clojure
 (host/sh "echo" "hi" {:allowed #{"echo"}})
