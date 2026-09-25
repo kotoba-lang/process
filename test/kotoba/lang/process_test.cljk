@@ -1,5 +1,5 @@
 (ns kotoba.lang.process-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.io :as kio] [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.process :as proc]
             [kotoba.lang.process-host :as host]))
@@ -51,8 +51,8 @@
 
 #?(:clj
    (deftest os-spawn-echo-on-jvm
-     (let [echo (let [c (java.io.File. "/bin/echo")]
-                  (when (.isFile c) (.getAbsolutePath c)))
+     (let [echo (let [c (kio/file "/bin/echo")]
+                  (when (kio/file? c) (kio/absolute-path c)))
            _ (is (string? echo) "need /bin/echo for this host test")
            p (host/os-spawn {:binaries {"echo" echo}})
            r (proc/spawn! p {:argv ["echo" "itonami"]
@@ -84,11 +84,11 @@
 ;; split is needed at the test level.
 
 (defn- file-exists? [path]
-  #?(:clj (.exists (java.io.File. ^String path))
+  #?(:clj (kio/exists? (kio/file ^String path))
      :cljs (.existsSync (js/require "fs") path)))
 
 (defn- delete-file! [path]
-  #?(:clj (.delete (java.io.File. ^String path))
+  #?(:clj (kio/delete (kio/file ^String path))
      :cljs (try (.unlinkSync (js/require "fs") path)
                 (catch :default _ nil))))
 
